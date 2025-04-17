@@ -1,0 +1,523 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>CPU Temperature Monitor</title>
+    <link href="https://cdn.jsdelivr.net/npm/tailwindcss@2.2.19/dist/tailwind.min.css" rel="stylesheet">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.0.1/socket.io.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+</head>
+<body class="bg-gray-900 text-white">
+    <div class="container mx-auto px-4 py-8">
+        <h1 class="text-4xl font-bold mb-8 text-center">System Monitor</h1>
+        
+        <!-- System Alerts -->
+        <div id="alerts-container" class="mb-8 hidden">
+            <!-- Alerts will be inserted here -->
+        </div>
+
+        <!-- System Overview -->
+        <div class="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-6 gap-4 mb-8">
+            <div class="bg-gray-800 rounded-lg p-4">
+                <h3 class="text-lg font-semibold mb-2 text-blue-400">CPU Usage</h3>
+                <div id="cpu-usage" class="text-2xl font-bold">-</div>
+            </div>
+            <div class="bg-gray-800 rounded-lg p-4">
+                <h3 class="text-lg font-semibold mb-2 text-blue-400">Memory Usage</h3>
+                <div id="memory-usage" class="text-2xl font-bold">-</div>
+            </div>
+            <div class="bg-gray-800 rounded-lg p-4">
+                <h3 class="text-lg font-semibold mb-2 text-blue-400">Disk Usage</h3>
+                <div id="disk-usage" class="text-2xl font-bold">-</div>
+            </div>
+            <div class="bg-gray-800 rounded-lg p-4">
+                <h3 class="text-lg font-semibold mb-2 text-blue-400">Load Avg</h3>
+                <div id="load-average" class="text-2xl font-bold">-</div>
+            </div>
+            <div class="bg-gray-800 rounded-lg p-4">
+                <h3 class="text-lg font-semibold mb-2 text-blue-400">CPU Freq</h3>
+                <div id="cpu-freq" class="text-2xl font-bold">-</div>
+            </div>
+            <div class="bg-gray-800 rounded-lg p-4">
+                <h3 class="text-lg font-semibold mb-2 text-blue-400">Uptime</h3>
+                <div id="system-uptime" class="text-2xl font-bold">-</div>
+            </div>
+        </div>
+
+        <div class="grid grid-cols-1 xl:grid-cols-2 gap-6">
+            <!-- Left Column -->
+            <div class="space-y-6">
+                <!-- Temperature Cards -->
+                <div id="temp-cards" class="space-y-6"></div>
+                
+                <!-- Memory Details -->
+                <div class="bg-gray-800 rounded-lg p-6">
+                    <h2 class="text-2xl font-bold mb-4 text-blue-400">Memory Details</h2>
+                    <div class="grid grid-cols-2 gap-4" id="memory-details">
+                        <!-- Memory details will be inserted here -->
+                    </div>
+                </div>
+
+                <!-- Network Stats -->
+                <div class="bg-gray-800 rounded-lg p-6">
+                    <h2 class="text-2xl font-bold mb-4 text-blue-400">Network Statistics</h2>
+                    <div class="grid grid-cols-2 gap-4" id="network-stats">
+                        <!-- Network stats will be inserted here -->
+                    </div>
+                </div>
+
+                <!-- Disk Stats -->
+                <div class="bg-gray-800 rounded-lg p-6">
+                    <h2 class="text-2xl font-bold mb-4 text-blue-400">Disk Statistics</h2>
+                    <div class="grid grid-cols-2 gap-4" id="disk-stats">
+                        <!-- Disk stats will be inserted here -->
+                    </div>
+                </div>
+
+                <!-- Process Table -->
+                <div class="bg-gray-800 rounded-lg p-6">
+                    <h2 class="text-2xl font-bold mb-4 text-blue-400">Top Processes</h2>
+                    <div class="overflow-x-auto">
+                        <table class="min-w-full">
+                            <thead>
+                                <tr class="text-left text-gray-400 border-b border-gray-700">
+                                    <th class="py-2 px-3">PID</th>
+                                    <th class="py-2 px-3">Name</th>
+                                    <th class="py-2 px-3">CPU%</th>
+                                    <th class="py-2 px-3">Memory%</th>
+                                    <th class="py-2 px-3">Path</th>
+                                    <th class="py-2 px-3">Status</th>
+                                </tr>
+                            </thead>
+                            <tbody id="process-table-body" class="text-sm">
+                                <!-- Process rows will be inserted here -->
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+            
+            <!-- Right Column -->
+            <div class="space-y-6">
+                <!-- Temperature Chart -->
+                <div class="bg-gray-800 rounded-lg p-6">
+                    <canvas id="tempChart"></canvas>
+                </div>
+                
+                <!-- CPU Usage Bars -->
+                <div class="bg-gray-800 rounded-lg p-6">
+                    <h2 class="text-2xl font-bold mb-4 text-blue-400">CPU Core Usage</h2>
+                    <div id="cpu-bars" class="space-y-4">
+                        <!-- CPU usage bars will be inserted here -->
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const socket = io();
+        const tempData = {};
+        let chart;
+
+        function initChart() {
+            const ctx = document.getElementById('tempChart').getContext('2d');
+            chart = new Chart(ctx, {
+                type: 'line',
+                data: {
+                    labels: [],
+                    datasets: []
+                },
+                options: {
+                    responsive: true,
+                    animation: {
+                        duration: 750,
+                        easing: 'easeInOutQuart'
+                    },
+                    interaction: {
+                        intersect: false,
+                        mode: 'nearest'
+                    },
+                    scales: {
+                        y: {
+                            beginAtZero: true,
+                            suggestedMax: 100,
+                            grid: {
+                                color: 'rgba(255, 255, 255, 0.1)'
+                            },
+                            ticks: {
+                                color: 'rgba(255, 255, 255, 0.7)',
+                                padding: 10
+                            }
+                        },
+                        x: {
+                            grid: {
+                                color: 'rgba(255, 255, 255, 0.1)'
+                            },
+                            ticks: {
+                                color: 'rgba(255, 255, 255, 0.7)',
+                                maxRotation: 0
+                            }
+                        }
+                    },
+                    plugins: {
+                        legend: {
+                            labels: {
+                                color: 'rgba(255, 255, 255, 0.7)',
+                                padding: 20,
+                                font: {
+                                    size: 12
+                                }
+                            }
+                        }
+                    },
+                    elements: {
+                        line: {
+                            tension: 0.4,
+                            borderWidth: 2,
+                            borderJoinStyle: 'round',
+                            capBezierPoints: true
+                        },
+                        point: {
+                            radius: 0,
+                            hitRadius: 10,
+                            hoverRadius: 4
+                        }
+                    }
+                }
+            });
+        }
+
+        function updateTempCards(data) {
+            const container = document.getElementById('temp-cards');
+            container.innerHTML = '';
+
+            for (const [sensorName, readings] of Object.entries(data)) {
+                const card = document.createElement('div');
+                card.className = 'bg-gray-800 rounded-lg p-6';
+                
+                let content = `<h2 class="text-2xl font-bold mb-4 text-blue-400">${sensorName}</h2>`;
+                
+                readings.forEach(reading => {
+                    const temp = parseFloat(reading.current);
+                    let colorClass = 'text-green-400';
+                    if (temp > 70) colorClass = 'text-red-400';
+                    else if (temp > 60) colorClass = 'text-yellow-400';
+
+                    content += `
+                        <div class="mb-4">
+                            <h3 class="text-xl font-semibold mb-2">${reading.label}</h3>
+                            <div class="grid grid-cols-3 gap-4">
+                                <div>
+                                    <p class="text-gray-400">Current</p>
+                                    <p class="${colorClass} text-lg font-bold">${reading.current}</p>
+                                </div>
+                                <div>
+                                    <p class="text-gray-400">High</p>
+                                    <p class="text-lg">${reading.high}</p>
+                                </div>
+                                <div>
+                                    <p class="text-gray-400">Critical</p>
+                                    <p class="text-lg">${reading.critical}</p>
+                                </div>
+                            </div>
+                        </div>
+                    `;
+                });
+                
+                card.innerHTML = content;
+                container.appendChild(card);
+            }
+        }
+
+        function updateChart(data) {
+            const timestamp = new Date().toLocaleTimeString();
+            
+            // Initialize datasets if they don't exist
+            if (chart.data.datasets.length === 0) {
+                const colors = [
+                    'rgba(75, 192, 192, 0.8)',
+                    'rgba(255, 99, 132, 0.8)',
+                    'rgba(255, 205, 86, 0.8)',
+                    'rgba(54, 162, 235, 0.8)'
+                ];
+                const hoverColors = [
+                    'rgba(75, 192, 192, 1)',
+                    'rgba(255, 99, 132, 1)',
+                    'rgba(255, 205, 86, 1)',
+                    'rgba(54, 162, 235, 1)'
+                ];
+                
+                let colorIndex = 0;
+                for (const [sensorName, readings] of Object.entries(data)) {
+                    readings.forEach(reading => {
+                        chart.data.datasets.push({
+                            label: `${sensorName} - ${reading.label}`,
+                            data: [],
+                            borderColor: colors[colorIndex % colors.length],
+                            hoverBorderColor: hoverColors[colorIndex % hoverColors.length],
+                            fill: false,
+                            cubicInterpolationMode: 'monotone'
+                        });
+                        colorIndex++;
+                    });
+                }
+            }
+
+            // Update data
+            let datasetIndex = 0;
+            for (const [sensorName, readings] of Object.entries(data)) {
+                readings.forEach(reading => {
+                    const temp = parseFloat(reading.current);
+                    if (chart.data.datasets[datasetIndex]) {
+                        chart.data.datasets[datasetIndex].data.push(temp);
+                        if (chart.data.datasets[datasetIndex].data.length > 30) {
+                            chart.data.datasets[datasetIndex].data.shift();
+                        }
+                    }
+                    datasetIndex++;
+                });
+            }
+
+            // Update labels
+            chart.data.labels.push(timestamp);
+            if (chart.data.labels.length > 30) {
+                chart.data.labels.shift();
+            }
+
+            chart.update();
+        }
+
+        socket.on('connect', () => {
+            console.log('Connected to server');
+            initChart();
+        });
+
+        function updateAlerts(alerts) {
+            const container = document.getElementById('alerts-container');
+            if (alerts.length === 0) {
+                container.classList.add('hidden');
+                return;
+            }
+
+            container.classList.remove('hidden');
+            container.innerHTML = alerts.map(alert => `
+                <div class="mb-2 p-4 rounded-lg ${alert.level === 'critical' ? 'bg-red-900' : 'bg-yellow-900'} flex items-center">
+                    <svg class="w-6 h-6 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" 
+                            d="${alert.level === 'critical' ? 'M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z' : 'M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z'}"/>
+                    </svg>
+                    <span>${alert.message}</span>
+                </div>
+            `).join('');
+        }
+
+        function updateSystemOverview(data) {
+            document.getElementById('cpu-usage').textContent = `${data.cpu_usage.average.toFixed(1)}%`;
+            document.getElementById('memory-usage').textContent = `${data.memory.percent}%`;
+            document.getElementById('disk-usage').textContent = `${data.disk.percent}%`;
+            document.getElementById('load-average').textContent = 
+                `${data.load_and_freq.load_avg['1min'].toFixed(2)}`;
+            document.getElementById('cpu-freq').textContent = 
+                data.load_and_freq.cpu_freq.current;
+            document.getElementById('system-uptime').textContent = data.uptime;
+        }
+
+        function updateMemoryDetails(memory) {
+            const details = document.getElementById('memory-details');
+            details.innerHTML = `
+                <div>
+                    <p class="text-gray-400">RAM Total</p>
+                    <p class="text-lg">${memory.total}</p>
+                </div>
+                <div>
+                    <p class="text-gray-400">RAM Used</p>
+                    <p class="text-lg">${memory.used}</p>
+                </div>
+                <div>
+                    <p class="text-gray-400">Swap Total</p>
+                    <p class="text-lg">${memory.swap_total}</p>
+                </div>
+                <div>
+                    <p class="text-gray-400">Swap Used</p>
+                    <p class="text-lg">${memory.swap_used}</p>
+                </div>
+            `;
+        }
+
+        function updateNetworkStats(network) {
+            const stats = document.getElementById('network-stats');
+            stats.innerHTML = `
+                <div>
+                    <p class="text-gray-400">Data Sent</p>
+                    <p class="text-lg">${network.bytes_sent}</p>
+                </div>
+                <div>
+                    <p class="text-gray-400">Data Received</p>
+                    <p class="text-lg">${network.bytes_recv}</p>
+                </div>
+                <div>
+                    <p class="text-gray-400">Packets Sent</p>
+                    <p class="text-lg">${network.packets_sent.toLocaleString()}</p>
+                </div>
+                <div>
+                    <p class="text-gray-400">Packets Received</p>
+                    <p class="text-lg">${network.packets_recv.toLocaleString()}</p>
+                </div>
+                <div>
+                    <p class="text-gray-400">Active Connections</p>
+                    <p class="text-lg">${network.active_connections}</p>
+                </div>
+            `;
+        }
+
+        function updateDiskStats(disk) {
+            const stats = document.getElementById('disk-stats');
+            stats.innerHTML = `
+                <div>
+                    <p class="text-gray-400">Total Space</p>
+                    <p class="text-lg">${disk.total}</p>
+                </div>
+                <div>
+                    <p class="text-gray-400">Used Space</p>
+                    <p class="text-lg">${disk.used}</p>
+                </div>
+                <div>
+                    <p class="text-gray-400">Free Space</p>
+                    <p class="text-lg">${disk.free}</p>
+                </div>
+                <div>
+                    <p class="text-gray-400">Read</p>
+                    <p class="text-lg">${disk.read_bytes}</p>
+                </div>
+                <div>
+                    <p class="text-gray-400">Written</p>
+                    <p class="text-lg">${disk.write_bytes}</p>
+                </div>
+                <div>
+                    <p class="text-gray-400">Read Operations</p>
+                    <p class="text-lg">${disk.read_count.toLocaleString()}</p>
+                </div>
+                <div>
+                    <p class="text-gray-400">Write Operations</p>
+                    <p class="text-lg">${disk.write_count.toLocaleString()}</p>
+                </div>
+            `;
+        }
+
+        function updateCpuBars(cpuUsage) {
+            const barsContainer = document.getElementById('cpu-bars');
+            barsContainer.innerHTML = cpuUsage.per_cpu.map((usage, index) => `
+                <div class="space-y-2">
+                    <div class="flex justify-between text-sm">
+                        <span>Core ${index}</span>
+                        <span>${usage.toFixed(1)}%</span>
+                    </div>
+                    <div class="w-full bg-gray-700 rounded-full h-2.5">
+                        <div class="bg-blue-500 h-2.5 rounded-full transition-all duration-500"
+                             style="width: ${usage}%"></div>
+                    </div>
+                </div>
+            `).join('');
+        }
+
+        function updateTempCards(data) {
+            const container = document.getElementById('temp-cards');
+            container.innerHTML = '';
+
+            for (const [sensorName, readings] of Object.entries(data.temperatures)) {
+                const card = document.createElement('div');
+                card.className = 'bg-gray-800 rounded-lg p-6';
+                
+                let content = `<h2 class="text-2xl font-bold mb-4 text-blue-400">${sensorName}</h2>`;
+                
+                readings.forEach(reading => {
+                    const temp = parseFloat(reading.current);
+                    let colorClass = 'text-green-400';
+                    if (temp > 70) colorClass = 'text-red-400';
+                    else if (temp > 60) colorClass = 'text-yellow-400';
+
+                    const history = data.temp_history[sensorName][reading.label];
+                    
+                    content += `
+                        <div class="mb-4">
+                            <h3 class="text-xl font-semibold mb-2">${reading.label}</h3>
+                            <div class="grid grid-cols-5 gap-4">
+                                <div>
+                                    <p class="text-gray-400">Current</p>
+                                    <p class="${colorClass} text-lg font-bold">${reading.current}</p>
+                                </div>
+                                <div>
+                                    <p class="text-gray-400">Min</p>
+                                    <p class="text-lg">${history.min.toFixed(1)}°C</p>
+                                </div>
+                                <div>
+                                    <p class="text-gray-400">Max</p>
+                                    <p class="text-lg">${history.max.toFixed(1)}°C</p>
+                                </div>
+                                <div>
+                                    <p class="text-gray-400">High</p>
+                                    <p class="text-lg">${reading.high}</p>
+                                </div>
+                                <div>
+                                    <p class="text-gray-400">Critical</p>
+                                    <p class="text-lg">${reading.critical}</p>
+                                </div>
+                            </div>
+                        </div>
+                    `;
+                });
+                
+                card.innerHTML = content;
+                container.appendChild(card);
+            }
+        }
+
+        function getStatusColor(status) {
+            const colors = {
+                'running': 'text-green-400',
+                'sleeping': 'text-blue-400',
+                'stopped': 'text-red-400',
+                'zombie': 'text-yellow-400',
+                'disk-sleep': 'text-purple-400'
+            };
+            return colors[status.toLowerCase()] || 'text-gray-400';
+        }
+
+        function getCpuColor(cpuPercent) {
+            if (cpuPercent >= 80) return 'text-red-400';
+            if (cpuPercent >= 50) return 'text-yellow-400';
+            if (cpuPercent >= 20) return 'text-blue-400';
+            return 'text-green-400';
+        }
+
+        function updateProcessTable(processes) {
+            const tbody = document.getElementById('process-table-body');
+            tbody.innerHTML = processes.map(proc => `
+                <tr class="border-b border-gray-700 hover:bg-gray-700">
+                    <td class="py-2 px-3">${proc.pid}</td>
+                    <td class="py-2 px-3 font-medium">${proc.name}</td>
+                    <td class="py-2 px-3 ${getCpuColor(proc.cpu_percent)}">${proc.cpu_percent.toFixed(1)}%</td>
+                    <td class="py-2 px-3">${proc.memory_percent.toFixed(1)}%</td>
+                    <td class="py-2 px-3 text-xs text-gray-400">${proc.full_path}</td>
+                    <td class="py-2 px-3 ${getStatusColor(proc.status)}">${proc.status}</td>
+                </tr>
+            `).join('');
+        }
+
+        socket.on('system_update', (msg) => {
+            const data = msg.data;
+            updateAlerts(data.alerts);
+            updateSystemOverview(data);
+            updateTempCards(data);
+            updateChart(data.temperatures);
+            updateMemoryDetails(data.memory);
+            updateCpuBars(data.cpu_usage);
+            updateProcessTable(data.top_processes);
+            updateNetworkStats(data.network);
+            updateDiskStats(data.disk);
+        });
+    </script>
+</body>
+</html>
