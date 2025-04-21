@@ -1,4 +1,4 @@
-# System Monitor Dashboard
+# SystemPulse
 
 A real-time system monitoring dashboard built with Python, aiohttp, and Socket.IO using asyncio.
 
