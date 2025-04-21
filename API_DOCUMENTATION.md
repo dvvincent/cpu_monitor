@@ -1,19 +1,25 @@
 # System Monitor API Documentation
 
+## API Base URL
+
+The API is available over both HTTP and HTTPS:
+- HTTPS (recommended): `https://localhost:3000`
+- HTTP: `http://localhost:3000`
+
 ## Quick Start
 
 ### Using cURL
 ```bash
-# Get current system metrics
-curl http://localhost:3000/api/system_info
+# Get current system metrics (ignore SSL verification for self-signed certs)
+curl -k https://localhost:3000/api/system_info
 ```
 
 ### Using Python
 ```python
 import requests
 
-# Get current system metrics
-response = requests.get('http://localhost:3000/api/system_info')
+# Get current system metrics (disable SSL verification for self-signed certs)
+response = requests.get('https://localhost:3000/api/system_info', verify=False)
 data = response.json()
 print(f"CPU Usage: {data['cpu']['percent']}%")
 print(f"Memory Used: {data['memory']['used']} of {data['memory']['total']}")
@@ -22,15 +28,17 @@ print(f"Memory Used: {data['memory']['used']} of {data['memory']['total']}")
 ### Using JavaScript
 ```javascript
 // Using Fetch API
-fetch('http://localhost:3000/api/system_info')
+fetch('https://localhost:3000/api/system_info')
   .then(response => response.json())
   .then(data => {
     console.log(`CPU Usage: ${data.cpu.percent}%`);
     console.log(`Memory Used: ${data.memory.used} of ${data.memory.total}`);
   });
 
-// Using Socket.IO for real-time updates
-const socket = io('http://localhost:3000');
+// Using Socket.IO for real-time updates with SSL
+const socket = io('https://localhost:3000', {
+    rejectUnauthorized: false  // For self-signed certificates
+});
 socket.on('system_update', (data) => {
     console.log('System metrics updated:', data);
 });
@@ -147,7 +155,7 @@ The response is a JSON object containing the following main sections:
 
 ##### Current System State
 ```json
-# Timestamp: 2025-04-21 19:43:50
+# Timestamp: 2025-04-21 20:45:45
 {{
   "cores": 4,
   "cpu_model": "x86_64",

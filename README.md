@@ -63,7 +63,7 @@ A real-time system monitoring dashboard built with Python, aiohttp, and Socket.I
 1. Clone the repository
 2. Install dependencies: `pip install -r requirements.txt`
 3. Run the application: `python web_monitor.py`
-4. Open a browser and navigate to `http://localhost:3000`
+4. Open a browser and navigate to `https://localhost:3443`
 
 ## Configuration
 

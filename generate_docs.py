@@ -120,26 +120,28 @@ def get_code_examples():
         'quick_start': {
             'python': '''import requests
 
-# Get current system metrics
-response = requests.get('http://localhost:3000/api/system_info')
+# Get current system metrics (disable SSL verification for self-signed certs)
+response = requests.get('https://localhost:3000/api/system_info', verify=False)
 data = response.json()
 print(f"CPU Usage: {data['cpu']['percent']}%")
 print(f"Memory Used: {data['memory']['used']} of {data['memory']['total']}")''',
             'javascript': '''// Using Fetch API
-fetch('http://localhost:3000/api/system_info')
+fetch('https://localhost:3000/api/system_info')
   .then(response => response.json())
   .then(data => {
     console.log(`CPU Usage: ${data.cpu.percent}%`);
     console.log(`Memory Used: ${data.memory.used} of ${data.memory.total}`);
   });
 
-// Using Socket.IO for real-time updates
-const socket = io('http://localhost:3000');
+// Using Socket.IO for real-time updates with SSL
+const socket = io('https://localhost:3000', {
+    rejectUnauthorized: false  // For self-signed certificates
+});
 socket.on('system_update', (data) => {
     console.log('System metrics updated:', data);
 });''',
-            'curl': '''# Get current system metrics
-curl http://localhost:3000/api/system_info'''
+            'curl': '''# Get current system metrics (ignore SSL verification for self-signed certs)
+curl -k https://localhost:3000/api/system_info'''
         },
         'use_cases': {
             'cpu': '''if data['cpu']['percent'] > 80:
@@ -166,6 +168,12 @@ def generate_markdown():
     data = get_system_info()
     examples = get_code_examples()
     doc = """# System Monitor API Documentation
+
+## API Base URL
+
+The API is available over both HTTP and HTTPS:
+- HTTPS (recommended): `https://localhost:3000`
+- HTTP: `http://localhost:3000`
 
 ## Quick Start
 
