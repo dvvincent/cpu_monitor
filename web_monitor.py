@@ -1,215 +1,200 @@
-#!/usr/bin/env python3
-from flask import Flask, render_template
-from flask_socketio import SocketIO
-import json
-from cpu_temp import get_detailed_cpu_temperatures
-import psutil
+import eventlet
+# Patch sockets to work with eventlet
+eventlet.monkey_patch()
+
+import os
 import time
-import threading
-from datetime import datetime, timedelta
+from datetime import datetime
+import psutil
+import logging
 import platform
+from flask import Flask, render_template, jsonify
+from flask_socketio import SocketIO, emit
 
-app = Flask(__name__)
-app.config['SECRET_KEY'] = 'secret!'
-socketio = SocketIO(app)
+# Configure logging
+tlogging = logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
-def get_system_info():
-    return {
-        'os': f"{platform.system()} {platform.release()}",
-        'cpu_model': platform.processor(),
-        'python_version': platform.python_version(),
-        'hostname': platform.node()
-    }
+# Create Flask app and SocketIO
+app = Flask(__name__, template_folder='templates')
+app.config['SECRET_KEY'] = os.environ.get('FLASK_SECRET_KEY', 'default-insecure-secret-key')
+socketio = SocketIO(app, async_mode='eventlet')
+
+# Monitoring interval (seconds)
+MONITOR_INTERVAL = float(os.environ.get('MONITOR_INTERVAL', 1.0))
+
+# Data fetching
+_last_net = psutil.net_io_counters()
+
+def get_cpu_info():
+    try:
+        # Get CPU percent and load average
+        load_1, load_5, load_15 = os.getloadavg()
+        return {
+            'percent': psutil.cpu_percent(interval=None),
+            'load_1': round(load_1, 2),
+            'load_5': round(load_5, 2),
+            'load_15': round(load_15, 2)
+        }
+    except Exception as e:
+        logging.error(f"CPU info error: {e}")
+        return {'percent': 0, 'load_1': 0, 'load_5': 0, 'load_15': 0, 'error': str(e)}
+
 
 def get_memory_info():
-    mem = psutil.virtual_memory()
-    swap = psutil.swap_memory()
-    return {
-        'total': f"{mem.total / (1024**3):.1f} GB",
-        'used': f"{mem.used / (1024**3):.1f} GB",
-        'percent': mem.percent,
-        'swap_total': f"{swap.total / (1024**3):.1f} GB",
-        'swap_used': f"{swap.used / (1024**3):.1f} GB",
-        'swap_percent': swap.percent
-    }
+    try:
+        mem = psutil.virtual_memory()
+        swap = psutil.swap_memory()
+        return {
+            'total': f"{mem.total / (1024**3):.1f} GB",
+            'used': f"{mem.used / (1024**3):.1f} GB",
+            'percent': mem.percent,
+            'swap_total': f"{swap.total / (1024**3):.1f} GB",
+            'swap_used': f"{swap.used / (1024**3):.1f} GB",
+            'swap_percent': swap.percent
+        }
+    except Exception as e:
+        logging.error(f"Memory info error: {e}")
+        return {'total': 'N/A', 'used': 'N/A', 'percent': 0, 'swap_total': 'N/A', 'swap_used': 'N/A', 'swap_percent': 0, 'error': str(e)}
 
-def get_network_info():
-    net_io = psutil.net_io_counters()
-    net_connections = len(psutil.net_connections())
-    return {
-        'bytes_sent': f"{net_io.bytes_sent / (1024**2):.1f} MB",
-        'bytes_recv': f"{net_io.bytes_recv / (1024**2):.1f} MB",
-        'packets_sent': net_io.packets_sent,
-        'packets_recv': net_io.packets_recv,
-        'active_connections': net_connections
-    }
 
 def get_disk_info():
-    disk_usage = psutil.disk_usage('/')
-    disk_io = psutil.disk_io_counters()
-    return {
-        'total': f"{disk_usage.total / (1024**3):.1f} GB",
-        'used': f"{disk_usage.used / (1024**3):.1f} GB",
-        'free': f"{disk_usage.free / (1024**3):.1f} GB",
-        'percent': disk_usage.percent,
-        'read_bytes': f"{disk_io.read_bytes / (1024**2):.1f} MB",
-        'write_bytes': f"{disk_io.write_bytes / (1024**2):.1f} MB",
-        'read_count': disk_io.read_count,
-        'write_count': disk_io.write_count
-    }
+    parts = []
+    try:
+        for p in psutil.disk_partitions():
+            if p.fstype:
+                try:
+                    usage = psutil.disk_usage(p.mountpoint)
+                    total = usage.total / (1024**3)
+                    used = usage.used / (1024**3)
+                    parts.append({'device': p.device, 'mountpoint': p.mountpoint, 'total': f"{total:.1f}", 'used': f"{used:.1f}", 'percent': usage.percent})
+                except Exception:
+                    continue
+    except Exception as e:
+        logging.error(f"Disk partitions error: {e}")
+    return parts
 
-def get_load_and_freq():
-    load1, load5, load15 = psutil.getloadavg()
-    cpu_freq = psutil.cpu_freq()
-    return {
-        'load_avg': {
-            '1min': load1,
-            '5min': load5,
-            '15min': load15
-        },
-        'cpu_freq': {
-            'current': f"{cpu_freq.current:.1f} MHz" if cpu_freq else "N/A",
-            'min': f"{cpu_freq.min:.1f} MHz" if cpu_freq and hasattr(cpu_freq, 'min') else "N/A",
-            'max': f"{cpu_freq.max:.1f} MHz" if cpu_freq and hasattr(cpu_freq, 'max') else "N/A"
+
+def get_system_time_info():
+    try:
+        boot_time = psutil.boot_time()
+        uptime = time.time() - boot_time
+        
+        # Convert boot time to readable format
+        boot_datetime = datetime.fromtimestamp(boot_time)
+        boot_str = boot_datetime.strftime('%Y-%m-%d %H:%M:%S')
+        
+        # Format uptime
+        days = int(uptime // (24 * 3600))
+        uptime = uptime % (24 * 3600)
+        hours = int(uptime // 3600)
+        uptime %= 3600
+        minutes = int(uptime // 60)
+        seconds = int(uptime % 60)
+        
+        uptime_str = ''
+        if days > 0:
+            uptime_str += f"{days}d "
+        uptime_str += f"{hours:02d}:{minutes:02d}:{seconds:02d}"
+        
+        return {
+            'boot_time': boot_str,
+            'uptime': uptime_str
         }
-    }
+    except Exception as e:
+        logging.error(f"System time info error: {e}")
+        return {'boot_time': 'N/A', 'uptime': 'N/A'}
 
-def get_system_alerts(cpu_percent, memory_percent, disk_percent):
-    alerts = []
-    if cpu_percent > 80:
-        alerts.append({
-            'level': 'critical',
-            'message': f'CPU usage is very high: {cpu_percent:.1f}%'
-        })
-    elif cpu_percent > 60:
-        alerts.append({
-            'level': 'warning',
-            'message': f'CPU usage is elevated: {cpu_percent:.1f}%'
-        })
-    
-    if memory_percent > 90:
-        alerts.append({
-            'level': 'critical',
-            'message': f'Memory usage is very high: {memory_percent:.1f}%'
-        })
-    elif memory_percent > 75:
-        alerts.append({
-            'level': 'warning',
-            'message': f'Memory usage is elevated: {memory_percent:.1f}%'
-        })
-    
-    if disk_percent > 90:
-        alerts.append({
-            'level': 'critical',
-            'message': f'Disk usage is very high: {disk_percent:.1f}%'
-        })
-    elif disk_percent > 75:
-        alerts.append({
-            'level': 'warning',
-            'message': f'Disk usage is elevated: {disk_percent:.1f}%'
-        })
-    
-    return alerts
+def get_temperature_info():
+    try:
+        temps = psutil.sensors_temperatures()
+        result = []
+        for name, entries in temps.items():
+            for entry in entries:
+                result.append({
+                    'name': f"{name}: {entry.label}" if entry.label else name,
+                    'current': round(entry.current, 1),
+                    'high': round(entry.high, 1) if entry.high is not None else None,
+                    'critical': round(entry.critical, 1) if entry.critical is not None else None
+                })
+        return result
+    except Exception as e:
+        logging.error(f"Temperature info error: {e}")
+        return []
 
-def get_uptime():
-    uptime = datetime.now() - datetime.fromtimestamp(psutil.boot_time())
-    days = uptime.days
-    hours = uptime.seconds // 3600
-    minutes = (uptime.seconds % 3600) // 60
-    return f"{days}d {hours}h {minutes}m"
+def get_network_info():
+    global _last_net
+    try:
+        current = psutil.net_io_counters()
+        sent = current.bytes_sent - _last_net.bytes_sent
+        recv = current.bytes_recv - _last_net.bytes_recv
+        _last_net = current
+        send_rate = sent * 8 / (MONITOR_INTERVAL * (1024**2))
+        recv_rate = recv * 8 / (MONITOR_INTERVAL * (1024**2))
+        return {
+            'bytes_sent_total': f"{current.bytes_sent/(1024**3):.2f}",
+            'bytes_recv_total': f"{current.bytes_recv/(1024**3):.2f}",
+            'send_rate_mbps': f"{send_rate:.2f}",
+            'recv_rate_mbps': f"{recv_rate:.2f}"}
+    except Exception as e:
+        logging.error(f"Network info error: {e}")
+        return {'bytes_sent_total': 0, 'bytes_recv_total': 0, 'send_rate_mbps': 0, 'recv_rate_mbps': 0, 'error': str(e)}
 
-def get_cpu_usage():
-    cpu_percent = psutil.cpu_percent(interval=1, percpu=True)
-    return {
-        'per_cpu': cpu_percent,
-        'average': sum(cpu_percent) / len(cpu_percent)
-    }
 
-def get_top_processes(limit=10, target_user='adminuser'):
-    processes = []
-    for proc in psutil.process_iter(['pid', 'name', 'cpu_percent', 'memory_percent', 'username', 'status', 'cmdline']):
-        try:
-            if proc.username() != target_user:
-                continue
-                
-            pinfo = proc.info
-            # Update CPU percent for each process
-            pinfo['cpu_percent'] = proc.cpu_percent(interval=None)
-            
-            # Get the full command line
-            try:
-                cmdline = proc.cmdline()
-                # Use the first argument (full path) if available, otherwise use the name
-                full_path = cmdline[0] if cmdline else proc.exe()
-            except (psutil.NoSuchProcess, psutil.AccessDenied):
-                full_path = pinfo['name']
-                
-            pinfo['full_path'] = full_path
-            processes.append(pinfo)
-        except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
-            pass
-    
-    # Sort by CPU usage and get top processes
-    top_processes = sorted(processes, key=lambda x: x['cpu_percent'], reverse=True)[:limit]
-    
-    return [{
-        'pid': p['pid'],
-        'name': p['name'],
-        'full_path': p['full_path'],
-        'cpu_percent': p['cpu_percent'],
-        'memory_percent': round(p['memory_percent'], 1) if p['memory_percent'] is not None else 0.0,
-        'status': p['status']
-    } for p in top_processes]
-
-def background_thread():
-    temp_history = {}
+def background_monitor():
+    logging.info(f"Background monitor started (interval={MONITOR_INTERVAL}s)")
+    socketio.sleep(0.1)
     while True:
-        temps = get_detailed_cpu_temperatures()
-        
-        # Update temperature history
-        for sensor_name, readings in temps.items():
-            if sensor_name not in temp_history:
-                temp_history[sensor_name] = {}
-            for reading in readings:
-                label = reading['label']
-                current = float(reading['current'].replace('°C', ''))
-                if label not in temp_history[sensor_name]:
-                    temp_history[sensor_name][label] = {'min': current, 'max': current}
-                else:
-                    temp_history[sensor_name][label]['min'] = min(temp_history[sensor_name][label]['min'], current)
-                    temp_history[sensor_name][label]['max'] = max(temp_history[sensor_name][label]['max'], current)
-        
-        cpu_usage = get_cpu_usage()
-        memory_info = get_memory_info()
-        disk_info = get_disk_info()
-        
-        system_data = {
-            'temperatures': temps,
-            'temp_history': temp_history,
-            'cpu_usage': cpu_usage,
-            'memory': memory_info,
-            'disk': disk_info,
+        data = {
+            'cpu': get_cpu_info(),
+            'memory': get_memory_info(),
+            'disk': get_disk_info(),
             'network': get_network_info(),
-            'load_and_freq': get_load_and_freq(),
-            'uptime': get_uptime(),
-            'timestamp': datetime.now().strftime('%H:%M:%S'),
-            'top_processes': get_top_processes(),
-            'alerts': get_system_alerts(
-                cpu_usage['average'],
-                memory_info['percent'],
-                disk_info['percent']
-            )
+            'temperature': get_temperature_info(),
+            'system_time': get_system_time_info()
         }
-        
-        socketio.emit('system_update', {'data': system_data})
-        time.sleep(1)
+        socketio.emit('system_update', data)
+        socketio.sleep(MONITOR_INTERVAL)
 
+
+# Routes
 @app.route('/')
 def index():
     return render_template('index.html')
 
+
+@app.route('/api/system_info')
+def api_system_info():
+    try:
+        info = {
+            'os': f"{platform.system()} {platform.release()}",
+            'hostname': platform.node(),
+            'cpu_model': platform.processor(),
+            'cores': psutil.cpu_count(logical=True),
+            'physical_cores': psutil.cpu_count(logical=False),
+            'python_version': platform.python_version()
+        }
+        return jsonify(info)
+    except Exception as e:
+        logging.error(f"Static info error: {e}")
+        return jsonify({'error': str(e)}), 500
+
+
+# Socket events
+@socketio.on('connect')
+def handle_connect():
+    logging.info('Client connected')
+    socketio.start_background_task(background_monitor)
+    emit('connection_ack', {'message': 'Connected'})
+
+
+@socketio.on('disconnect')
+def handle_disconnect():
+    logging.info('Client disconnected')
+
+
 if __name__ == '__main__':
-    thread = threading.Thread(target=background_thread)
-    thread.daemon = True
-    thread.start()
-    socketio.run(app, host='0.0.0.0', port=5000, debug=True)
+    host = os.environ.get('FLASK_HOST', '0.0.0.0')
+    port = int(os.environ.get('FLASK_PORT', 3000))
+    debug = os.environ.get('FLASK_DEBUG', 'False').lower() in ('true', '1', 't')
+    logging.info(f"Starting server at http://{host}:{port}")
+    socketio.run(app, host=host, port=port, debug=debug)
