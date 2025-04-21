@@ -1,6 +1,6 @@
 # System Monitor Dashboard
 
-A real-time system monitoring dashboard built with Python Flask and Socket.IO.
+A real-time system monitoring dashboard built with Python, aiohttp, and Socket.IO using asyncio.
 
 ## Features
 
@@ -14,7 +14,7 @@ A real-time system monitoring dashboard built with Python Flask and Socket.IO.
 
 ## Architecture Overview
 
-### Backend (Python/Flask)
+### Backend (Python/aiohttp)
 
 1. **Data Collection**:
    - `psutil` library collects system metrics
@@ -22,12 +22,12 @@ A real-time system monitoring dashboard built with Python Flask and Socket.IO.
    - Data is collected at regular intervals defined by `MONITOR_INTERVAL`
 
 2. **Server Setup**:
-   - Flask serves the web application
-   - Flask-SocketIO enables real-time bidirectional communication
-   - Eventlet provides asynchronous networking
+   - aiohttp serves the web application
+   - python-socketio enables real-time bidirectional communication
+   - asyncio provides asynchronous networking
 
 3. **Background Task**:
-   - `background_monitor()` runs in a separate thread
+   - `background_monitor()` runs as an async coroutine
    - Collects all system metrics periodically
    - Emits data via Socket.IO to connected clients
 
@@ -53,10 +53,10 @@ A real-time system monitoring dashboard built with Python Flask and Socket.IO.
 ## Requirements
 
 - Python 3.x
-- Flask
-- Flask-SocketIO
+- aiohttp
+- python-socketio
 - psutil
-- eventlet
+- jinja2
 
 ## Installation
 
