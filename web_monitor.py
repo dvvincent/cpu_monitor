@@ -1,16 +1,14 @@
-import eventlet
-# Patch sockets to work with eventlet
-eventlet.monkey_patch()
-
 import os
 import time
+import asyncio
 from datetime import datetime
 import psutil
 import logging
 import yaml
 from pathlib import Path
-from flask import Flask, render_template, jsonify
-from flask_socketio import SocketIO, emit
+from aiohttp import web
+import socketio
+from jinja2 import Environment, FileSystemLoader
 
 # Configure logging
 logging.basicConfig(
@@ -76,18 +74,18 @@ def load_config():
 # Load configuration
 config = load_config()
 
-# Create Flask app and SocketIO
-app = Flask(__name__, template_folder='templates')
-app.config['SECRET_KEY'] = config['security']['secret_key']
+# Set up Jinja2 templates
+env = Environment(loader=FileSystemLoader('templates'))
 
-# Configure Socket.IO
-socketio = SocketIO(
-    app,
-    async_mode='threading',
-    cors_allowed_origins=config['security']['cors_origins'] if config['security']['enable_cors'] else [],
-    secure=config['server']['https']['enabled'],
-    ssl_verify=False
+# Create Socket.IO server
+sio = socketio.AsyncServer(
+    async_mode='aiohttp',
+    cors_allowed_origins=config['security']['cors_origins'] if config['security']['enable_cors'] else []
 )
+
+# Create aiohttp web application
+app = web.Application()
+sio.attach(app)
 
 # Monitoring interval (seconds)
 MONITOR_INTERVAL = float(config['monitoring']['update_interval'])
@@ -210,31 +208,36 @@ def get_network_info():
         return {'bytes_sent_total': 0, 'bytes_recv_total': 0, 'send_rate_mbps': 0, 'recv_rate_mbps': 0, 'error': str(e)}
 
 
-def background_monitor():
-    logging.info(f"Background monitor started (interval={MONITOR_INTERVAL}s)")
-    socketio.sleep(0.1)
+async def background_monitor(sid):
+    logging.info(f"Background monitor started for {sid} (interval={MONITOR_INTERVAL}s)")
+    await asyncio.sleep(0.1)
     while True:
-        data = {
-            'cpu': get_cpu_info(),
-            'memory': get_memory_info(),
-            'disk': get_disk_info(),
-            'network': get_network_info(),
-            'temperature': get_temperature_info(),
-            'system_time': get_system_time_info()
-        }
-        socketio.emit('system_update', data)
-        socketio.sleep(MONITOR_INTERVAL)
+        try:
+            data = {
+                'cpu': get_cpu_info(),
+                'memory': get_memory_info(),
+                'disk': get_disk_info(),
+                'network': get_network_info(),
+                'temperature': get_temperature_info(),
+                'system_time': get_system_time_info()
+            }
+            await sio.emit('system_update', data, room=sid)
+            await asyncio.sleep(MONITOR_INTERVAL)
+        except Exception as e:
+            logging.error(f"Error in background monitor: {e}")
+            break
 
 
 # Routes
-@app.route('/')
-def index():
-    return render_template('index.html')
+async def index(request):
+    template = env.get_template('index.html')
+    html = template.render()
+    return web.Response(text=html, content_type='text/html')
 
 
-@app.route('/api/system_info')
-def api_system_info():
+async def api_system_info(request):
     try:
+        import platform
         info = {
             'os': f"{platform.system()} {platform.release()}",
             'hostname': platform.node(),
@@ -243,28 +246,31 @@ def api_system_info():
             'physical_cores': psutil.cpu_count(logical=False),
             'python_version': platform.python_version()
         }
-        return jsonify(info)
+        return web.json_response(info)
     except Exception as e:
         logging.error(f"Static info error: {e}")
-        return jsonify({'error': str(e)}), 500
+        return web.json_response({'error': str(e)}, status=500)
 
 
 # Socket events
-@socketio.on('connect')
-def handle_connect():
-    logging.info('Client connected')
-    socketio.start_background_task(background_monitor)
-    emit('connection_ack', {'message': 'Connected'})
+@sio.event
+async def connect(sid, environ):
+    logging.info(f'Client connected: {sid}')
+    asyncio.create_task(background_monitor(sid))
+    await sio.emit('connection_ack', {'message': 'Connected'}, room=sid)
 
 
-@socketio.on('disconnect')
-def handle_disconnect():
-    logging.info('Client disconnected')
+@sio.event
+async def disconnect(sid):
+    logging.info(f'Client disconnected: {sid}')
 
 
-if __name__ == '__main__':
+async def main():
     host = config['server']['host']
-    debug = os.environ.get('FLASK_DEBUG', 'False').lower() in ('true', '1', 't')
+    
+    # Set up routes
+    app.router.add_get('/', index)
+    app.router.add_get('/api/system_info', api_system_info)
     
     if config['server']['https']['enabled']:
         # HTTPS server
@@ -280,25 +286,44 @@ if __name__ == '__main__':
         logging.info(f"Starting HTTPS server at https://{host}:{https_port}")
         context = ssl.create_default_context(ssl.Purpose.CLIENT_AUTH)
         context.load_cert_chain(cert_file, key_file)
-        socketio.run(
-            app,
-            host=host,
-            port=https_port,
-            debug=debug,
+        
+        # Run the server with SSL
+        runner = web.AppRunner(app)
+        await runner.setup()
+        site = web.TCPSite(
+            runner,
+            host,
+            https_port,
             ssl_context=context
         )
+        await site.start()
+        
+        # Keep the server running
+        while True:
+            await asyncio.sleep(3600)
     
     elif config['server']['http']['enabled']:
-        # HTTP server (only if HTTPS is disabled)
+        # HTTP server
         http_port = config['server']['http']['port']
         logging.info(f"Starting HTTP server at http://{host}:{http_port}")
-        socketio.run(
-            app,
-            host=host,
-            port=http_port,
-            debug=debug
+        
+        # Run the server
+        runner = web.AppRunner(app)
+        await runner.setup()
+        site = web.TCPSite(
+            runner,
+            host,
+            http_port
         )
+        await site.start()
+        
+        # Keep the server running
+        while True:
+            await asyncio.sleep(3600)
     
     else:
         logging.error("Neither HTTP nor HTTPS is enabled. At least one must be enabled.")
         exit(1)
+
+if __name__ == '__main__':
+    asyncio.run(main())
