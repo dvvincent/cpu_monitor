@@ -1,1 +1,25 @@
+# Virtual environment
 venv/
+
+# SSL certificates
+ssl/
+*.pem
+*.key
+*.crt
+
+# Environment variables and config
+.env
+config.yaml
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+
+# IDE
+.vscode/
+.idea/
+*.swp
+
+# Logs
+*.log

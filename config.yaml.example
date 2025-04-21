@@ -1,0 +1,42 @@
+# Server Configuration
+server:
+  # Host to bind the server (0.0.0.0 allows external connections)
+  host: "0.0.0.0"
+  
+  # HTTP configuration
+  http:
+    enabled: true
+    port: 3000
+  
+  # HTTPS configuration
+  https:
+    enabled: true
+    port: 3443
+    certificates:
+      # Path to SSL certificate and key files
+      cert_file: "ssl/cert.pem"
+      key_file: "ssl/key.pem"
+      # Days until certificate expiration (for self-signed certificates)
+      validity_days: 365
+
+# Monitoring Configuration
+monitoring:
+  # Interval in seconds between metric updates
+  update_interval: 1.0
+  
+  # Metrics to collect (true/false)
+  metrics:
+    cpu: true
+    memory: true
+    disk: true
+    network: true
+    processes: true
+
+# Security Configuration
+security:
+  # Set to true to enable CORS (Cross-Origin Resource Sharing)
+  enable_cors: false
+  # Allowed origins for CORS (if enabled)
+  cors_origins: ["*"]
+  # Secret key for session management (change this in your config.yaml!)
+  secret_key: "change-this-to-a-secure-secret-key"

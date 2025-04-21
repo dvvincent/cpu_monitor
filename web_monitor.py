@@ -7,20 +7,90 @@ import time
 from datetime import datetime
 import psutil
 import logging
-import platform
+import yaml
+from pathlib import Path
 from flask import Flask, render_template, jsonify
 from flask_socketio import SocketIO, emit
 
 # Configure logging
-tlogging = logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(levelname)s - %(message)s'
+)
+
+# Load configuration
+def load_config():
+    # Default configuration
+    default_config = {
+        'server': {
+            'host': '0.0.0.0',
+            'http': {'enabled': True, 'port': 3000},
+            'https': {
+                'enabled': True,
+                'port': 3443,
+                'certificates': {
+                    'cert_file': 'ssl/cert.pem',
+                    'key_file': 'ssl/key.pem',
+                    'validity_days': 365
+                }
+            }
+        },
+        'monitoring': {
+            'update_interval': 1.0,
+            'metrics': {
+                'cpu': True,
+                'memory': True,
+                'disk': True,
+                'network': True,
+                'processes': True
+            }
+        },
+        'security': {
+            'enable_cors': False,
+            'cors_origins': ['*'],
+            'secret_key': 'default-insecure-secret-key'
+        }
+    }
+    
+    # Try to load user config
+    config_path = Path('config.yaml')
+    if config_path.exists():
+        try:
+            with open(config_path) as f:
+                user_config = yaml.safe_load(f)
+                # Deep merge user config with defaults
+                def merge_dicts(default, override):
+                    for key, value in override.items():
+                        if key in default and isinstance(default[key], dict) and isinstance(value, dict):
+                            merge_dicts(default[key], value)
+                        else:
+                            default[key] = value
+                merge_dicts(default_config, user_config)
+        except Exception as e:
+            logging.warning(f"Error loading config.yaml: {e}. Using default configuration.")
+    else:
+        logging.info("No config.yaml found. Using default configuration.")
+    
+    return default_config
+
+# Load configuration
+config = load_config()
 
 # Create Flask app and SocketIO
 app = Flask(__name__, template_folder='templates')
-app.config['SECRET_KEY'] = os.environ.get('FLASK_SECRET_KEY', 'default-insecure-secret-key')
-socketio = SocketIO(app, async_mode='eventlet')
+app.config['SECRET_KEY'] = config['security']['secret_key']
+
+# Configure Socket.IO
+socketio = SocketIO(
+    app,
+    async_mode='threading',
+    cors_allowed_origins=config['security']['cors_origins'] if config['security']['enable_cors'] else [],
+    secure=config['server']['https']['enabled'],
+    ssl_verify=False
+)
 
 # Monitoring interval (seconds)
-MONITOR_INTERVAL = float(os.environ.get('MONITOR_INTERVAL', 1.0))
+MONITOR_INTERVAL = float(config['monitoring']['update_interval'])
 
 # Data fetching
 _last_net = psutil.net_io_counters()
@@ -193,8 +263,42 @@ def handle_disconnect():
 
 
 if __name__ == '__main__':
-    host = os.environ.get('FLASK_HOST', '0.0.0.0')
-    port = int(os.environ.get('FLASK_PORT', 3000))
+    host = config['server']['host']
     debug = os.environ.get('FLASK_DEBUG', 'False').lower() in ('true', '1', 't')
-    logging.info(f"Starting server at http://{host}:{port}")
-    socketio.run(app, host=host, port=port, debug=debug)
+    
+    if config['server']['https']['enabled']:
+        # HTTPS server
+        cert_file = config['server']['https']['certificates']['cert_file']
+        key_file = config['server']['https']['certificates']['key_file']
+        https_port = config['server']['https']['port']
+        
+        if not os.path.exists(cert_file) or not os.path.exists(key_file):
+            logging.error("SSL certificates not found. Cannot start HTTPS server.")
+            exit(1)
+        
+        import ssl
+        logging.info(f"Starting HTTPS server at https://{host}:{https_port}")
+        context = ssl.create_default_context(ssl.Purpose.CLIENT_AUTH)
+        context.load_cert_chain(cert_file, key_file)
+        socketio.run(
+            app,
+            host=host,
+            port=https_port,
+            debug=debug,
+            ssl_context=context
+        )
+    
+    elif config['server']['http']['enabled']:
+        # HTTP server (only if HTTPS is disabled)
+        http_port = config['server']['http']['port']
+        logging.info(f"Starting HTTP server at http://{host}:{http_port}")
+        socketio.run(
+            app,
+            host=host,
+            port=http_port,
+            debug=debug
+        )
+    
+    else:
+        logging.error("Neither HTTP nor HTTPS is enabled. At least one must be enabled.")
+        exit(1)
