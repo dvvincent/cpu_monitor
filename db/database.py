@@ -51,14 +51,20 @@ class Database:
                 
                 # Create time-bucket views for different intervals
                 for interval in ['1 minute', '5 minutes', '1 hour']:
+                    view_name = f"system_metrics_{interval.replace(' ', '_')}"
+                    # Drop the view if it exists to ensure schema update
+                    await conn.execute(text(f"DROP MATERIALIZED VIEW IF EXISTS {view_name};"))
+                    
+                    # Create the view
                     await conn.execute(
                         text(f"""
-                        CREATE MATERIALIZED VIEW IF NOT EXISTS system_metrics_{interval.replace(' ', '_')} AS
+                        CREATE MATERIALIZED VIEW {view_name} AS
                         SELECT
                             time_bucket('{interval}', timestamp) AS bucket,
                             avg(cpu_percent) as cpu_percent_avg,
                             avg(memory_percent) as memory_percent_avg,
                             avg(disk_percent) as disk_percent_avg,
+                            avg(swap_percent) as swap_percent_avg,
                             avg(temperature) as temperature_avg,
                             avg(network_send_rate) as network_send_rate_avg,
                             avg(network_recv_rate) as network_recv_rate_avg

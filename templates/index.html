@@ -127,6 +127,27 @@
             </div>
         </div>
     </div>
+
+    <!-- History Section -->
+    <div class="row mt-4">
+        <div class="col-12">
+            <div class="card text-bg-dark">
+                <div class="card-header d-flex justify-content-between align-items-center">
+                    <span>12 Hour History</span>
+                    <div class="btn-group btn-group-sm" role="group">
+                        <button type="button" class="btn btn-outline-light active" data-metric="cpu">CPU</button>
+                        <button type="button" class="btn btn-outline-light" data-metric="memory">Memory</button>
+                        <button type="button" class="btn btn-outline-light" data-metric="disk">Disk</button>
+                        <button type="button" class="btn btn-outline-light" data-metric="network">Network</button>
+                    </div>
+                </div>
+                <div class="card-body">
+                    <canvas id="historyChart" style="width: 100%; height: 300px;"></canvas>
+                </div>
+            </div>
+        </div>
+    </div>
+
     <!-- Bootstrap JS Bundle -->
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js" integrity="sha384-YvpcrYf0tY3lHB60NNkmXc5s9fDVZLESaAA55NDzOxhy9GkcIdslK1eN7N6jIeHz" crossorigin="anonymous"></script>
     <!-- Socket.IO Client -->
@@ -136,10 +157,14 @@
     <script>
     // Chart.js configuration
     let metricsChart = null;
+    let historyChart = null;
     
-    function initChart() {
-        const ctx = document.getElementById('metricsChart').getContext('2d');
-        metricsChart = new Chart(ctx, {
+    function initCharts() {
+        // Initialize real-time metrics chart
+        const metricsCtx = document.getElementById('metricsChart').getContext('2d');
+        // Initialize history chart
+        const historyCtx = document.getElementById('historyChart').getContext('2d');
+        metricsChart = new Chart(metricsCtx, {
             type: 'line',
             data: {
                 labels: [],
@@ -152,6 +177,11 @@
                     {
                         label: 'Memory %',
                         borderColor: 'rgb(75, 192, 192)',
+                        data: []
+                    },
+                    {
+                        label: 'Swap %',
+                        borderColor: 'rgb(255, 205, 86)',
                         data: []
                     },
                     {
@@ -204,34 +234,140 @@
         });
     }
     
-    async function updateHistoricalData(interval = '5 minutes') {
+    async function updateHistoricalData(interval = '5 minutes', metric = 'cpu') {
+        // Initialize history chart if not already done
+        if (!historyChart) {
+            const historyCtx = document.getElementById('historyChart').getContext('2d');
+            historyChart = new Chart(historyCtx, {
+                type: 'line',
+                data: {
+                    labels: [],
+                    datasets: [{
+                        label: 'CPU Usage',
+                        data: [],
+                        borderColor: 'rgb(255, 99, 132)',
+                        tension: 0.1,
+                        fill: false
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    animation: false,
+                    scales: {
+                        y: {
+                            beginAtZero: true,
+                            max: 100,
+                            grid: {
+                                color: 'rgba(255, 255, 255, 0.1)'
+                            },
+                            ticks: {
+                                color: 'rgb(255, 255, 255)'
+                            }
+                        },
+                        x: {
+                            grid: {
+                                color: 'rgba(255, 255, 255, 0.1)'
+                            },
+                            ticks: {
+                                color: 'rgb(255, 255, 255)',
+                                maxRotation: 45,
+                                minRotation: 45
+                            }
+                        }
+                    },
+                    plugins: {
+                        legend: {
+                            position: 'top',
+                            labels: {
+                                color: 'rgb(255, 255, 255)'
+                            }
+                        }
+                    }
+                }
+            });
+        }
         try {
-            const response = await fetch(`/api/metrics/history?interval=${interval}`);
+            const response = await fetch(`/api/metrics/history?interval=${interval}&limit=144`); // 144 points = 12 hours
             const data = await response.json();
             
             if (data.metrics && data.metrics.length > 0) {
-                const timestamps = data.metrics.map(m => new Date(m.timestamp).toLocaleTimeString());
+                const timestamps = data.metrics.map(m => {
+                    const date = new Date(m.timestamp);
+                    return date.toLocaleTimeString();
+                });
+                
+                // Update real-time chart
+                metricsChart.data.labels = timestamps;
                 const cpuData = data.metrics.map(m => m.cpu_percent);
                 const memoryData = data.metrics.map(m => m.memory_percent);
+                const swapData = data.metrics.map(m => m.swap_percent);
                 const diskData = data.metrics.map(m => m.disk_percent);
                 const netSendData = data.metrics.map(m => m.network_send_rate);
                 const netRecvData = data.metrics.map(m => m.network_recv_rate);
                 
-                metricsChart.data.labels = timestamps;
                 metricsChart.data.datasets[0].data = cpuData;
                 metricsChart.data.datasets[1].data = memoryData;
-                metricsChart.data.datasets[2].data = diskData;
-                metricsChart.data.datasets[3].data = netSendData;
-                metricsChart.data.datasets[4].data = netRecvData;
+                metricsChart.data.datasets[2].data = swapData;
+                metricsChart.data.datasets[3].data = diskData;
+                metricsChart.data.datasets[4].data = netSendData;
+                metricsChart.data.datasets[5].data = netRecvData;
                 metricsChart.update();
+
+                // Update history chart based on selected metric
+                let historyData;
+                let label;
+                let color;
+                switch(metric) {
+                    case 'cpu':
+                        historyData = cpuData;
+                        label = 'CPU Usage';
+                        color = 'rgb(255, 99, 132)';
+                        break;
+                    case 'memory':
+                        historyData = memoryData;
+                        label = 'Memory Usage';
+                        color = 'rgb(75, 192, 192)';
+                        break;
+                    case 'disk':
+                        historyData = diskData;
+                        label = 'Disk Usage';
+                        color = 'rgb(153, 102, 255)';
+                        break;
+                    case 'network':
+                        historyData = netSendData;
+                        label = 'Network Send Rate';
+                        color = 'rgb(255, 159, 64)';
+                        break;
+                }
+
+                historyChart.data.labels = timestamps;
+                historyChart.data.datasets[0].data = historyData;
+                historyChart.data.datasets[0].label = label;
+                historyChart.data.datasets[0].borderColor = color;
+                historyChart.update();
             }
         } catch (error) {
             console.error('Error fetching historical data:', error);
         }
     }
     
-    document.addEventListener('DOMContentLoaded', () => {
-        initChart();
+    document.addEventListener('DOMContentLoaded', function() {
+        initCharts();
+
+        // Set up metric button handlers
+        document.querySelectorAll('[data-metric]').forEach(button => {
+            button.addEventListener('click', (e) => {
+                // Update active button
+                document.querySelectorAll('[data-metric]').forEach(b => b.classList.remove('active'));
+                e.target.classList.add('active');
+                
+                // Update history chart
+                updateHistoricalData('5 minutes', e.target.dataset.metric);
+            });
+        });
+
+        // Initial chart setup
         updateHistoricalData();
         // Update historical data every minute
         setInterval(() => updateHistoricalData(), 60000);
@@ -292,28 +428,28 @@
             load5.textContent = data.cpu.load_5;
             load15.textContent = data.cpu.load_15;
             // Memory
-            memUsed.textContent = data.memory.used;
-            memTotal.textContent = data.memory.total;
-            updateBar(memBar, data.memory.percent);
-            swapUsed.textContent = data.memory.swap_used;
-            swapTotal.textContent = data.memory.swap_total;
+            memUsed.textContent = formatBytes(data.memory.memory_used); 
+            memTotal.textContent = formatBytes(data.memory.memory_total); 
+            updateBar(memBar, data.memory.memory_percent);
+            swapUsed.textContent = formatBytes(data.memory.swap_used); 
+            swapTotal.textContent = formatBytes(data.memory.swap_total); 
             updateBar(swapBar, data.memory.swap_percent);
             // Disk
             if (Array.isArray(data.disk)) {
                 let html = '';
                 data.disk.forEach(d => {
                     html +=
-                        `<div class="mb-2"><strong>${d.mountpoint}</strong>: ${d.used}/${d.total} GB
+                        `<div class="mb-2"><strong>${d.mountpoint}</strong>: ${formatBytes(d.used)}/${formatBytes(d.total)}
                          <div class="progress"><div class="progress-bar" style="width:${d.percent}%">${d.percent}%</div></div>
                         </div>`;
                 });
                 diskContainer.innerHTML = html;
             }
             // Network
-            netSent.textContent = data.network.bytes_sent_total;
-            netRecv.textContent = data.network.bytes_recv_total;
-            netSendRate.textContent = data.network.send_rate_mbps;
-            netRecvRate.textContent = data.network.recv_rate_mbps;
+            netSent.textContent = formatBytes(data.network.bytes_sent_total); 
+            netRecv.textContent = formatBytes(data.network.bytes_recv_total); 
+            netSendRate.textContent = data.network.send_rate_mbps.toFixed(2); 
+            netRecvRate.textContent = data.network.recv_rate_mbps.toFixed(2); 
 
             // Temperature
             if (data.temperature.length > 0) {
@@ -341,6 +477,15 @@
         function updateBar(bar, val) {
             bar.style.width = `${val}%`;
             bar.textContent = `${val}%`;
+        }
+
+        function formatBytes(bytes, decimals = 2) {
+            if (bytes === 0) return '0 Bytes';
+            const k = 1024;
+            const dm = decimals < 0 ? 0 : decimals;
+            const sizes = ['Bytes', 'KB', 'MB', 'GB', 'TB', 'PB', 'EB', 'ZB', 'YB'];
+            const i = Math.floor(Math.log(bytes) / Math.log(k));
+            return parseFloat((bytes / Math.pow(k, i)).toFixed(dm)) + ' ' + sizes[i];
         }
     });
     </script>

@@ -239,6 +239,7 @@ def get_network_info():
 async def background_monitor(sid):
     logging.info(f"Background monitor started for {sid} (interval={MONITOR_INTERVAL}s)")
     await asyncio.sleep(0.1)
+    current_process = psutil.Process(os.getpid()) # Get current process
     while True:
         try:
             # Collect metrics
@@ -294,6 +295,12 @@ async def background_monitor(sid):
                 'temperature': temp_info,
                 'system_time': time_info_for_client # Use the modified copy
             }
+            
+            # Log own memory usage
+            mem_info = current_process.memory_info()
+            rss_mb = mem_info.rss / (1024 * 1024) # Convert bytes to MB
+            logging.info(f"Process Memory Usage (PID: {current_process.pid}): {rss_mb:.2f} MB RSS")
+            
             await sio.emit('system_update', data, room=sid)
             
             await asyncio.sleep(MONITOR_INTERVAL)
@@ -353,6 +360,7 @@ async def get_metrics_history(request):
                 'cpu_percent': row.cpu_percent_avg,
                 'memory_percent': row.memory_percent_avg,
                 'disk_percent': row.disk_percent_avg,
+                'swap_percent': row.swap_percent_avg, # Added swap percent
                 'temperature': row.temperature_avg,
                 'network_send_rate': row.network_send_rate_avg,
                 'network_recv_rate': row.network_recv_rate_avg
