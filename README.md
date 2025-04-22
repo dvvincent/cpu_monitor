@@ -12,6 +12,7 @@ A real-time system monitoring dashboard built with Python, aiohttp, and Socket.I
 - Temperature sensors data
 - System uptime and boot time
 - Historical system metrics storage using TimescaleDB
+- Interactive 12-hour history visualization with metric selection
 
 ## Architecture Overview
 
@@ -43,6 +44,7 @@ A real-time system monitoring dashboard built with Python, aiohttp, and Socket.I
    - Browser loads the HTML template
    - Establishes Socket.IO connection to server
    - Initializes UI elements and event listeners
+   - Sets up real-time and historical charts
 
 2. **Real-time Updates**:
    - Listens for 'system_update' events from server
@@ -50,8 +52,16 @@ A real-time system monitoring dashboard built with Python, aiohttp, and Socket.I
      - Progress bars for CPU/memory usage
      - Text displays for metrics
      - Dynamic cards for disk and temperature data
+     - Real-time metrics chart
 
-3. **Connection Management**:
+3. **Historical Data**:
+   - Displays 12-hour system metrics history
+   - Interactive metric selection (CPU, Memory, Disk, Network)
+   - 5-minute data resolution using TimescaleDB aggregation
+   - Auto-updates every 5 minutes
+   - Dark theme compatible charts
+
+4. **Connection Management**:
    - Handles connection/disconnection events
    - Updates connection status indicator
    - Resets displays when disconnected
