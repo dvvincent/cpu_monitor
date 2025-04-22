@@ -103,15 +103,23 @@ def get_cpu_info():
     try:
         # Get CPU percent and load average
         load_1, load_5, load_15 = os.getloadavg()
+        freq = psutil.cpu_freq()
         return {
             'percent': psutil.cpu_percent(interval=None),
             'load_1': round(load_1, 2),
             'load_5': round(load_5, 2),
-            'load_15': round(load_15, 2)
+            'load_15': round(load_15, 2),
+            'cpu_freq_current': freq.current if freq else 0,
+            'cpu_freq_min': freq.min if freq else 0,
+            'cpu_freq_max': freq.max if freq else 0
         }
     except Exception as e:
         logging.error(f"CPU info error: {e}")
-        return {'percent': 0, 'load_1': 0, 'load_5': 0, 'load_15': 0, 'error': str(e)}
+        return {
+            'percent': 0, 'load_1': 0, 'load_5': 0, 'load_15': 0,
+            'cpu_freq_current': 0, 'cpu_freq_min': 0, 'cpu_freq_max': 0,
+            'error': str(e)
+        }
 
 
 def get_memory_info():
@@ -119,16 +127,22 @@ def get_memory_info():
         mem = psutil.virtual_memory()
         swap = psutil.swap_memory()
         return {
-            'total': f"{mem.total / (1024**3):.1f} GB",
-            'used': f"{mem.used / (1024**3):.1f} GB",
-            'percent': mem.percent,
-            'swap_total': f"{swap.total / (1024**3):.1f} GB",
-            'swap_used': f"{swap.used / (1024**3):.1f} GB",
+            'memory_total': mem.total,
+            'memory_used': mem.used,
+            'memory_available': mem.available,
+            'memory_percent': mem.percent,
+            'swap_total': swap.total,
+            'swap_used': swap.used,
+            'swap_free': swap.free,
             'swap_percent': swap.percent
         }
     except Exception as e:
         logging.error(f"Memory info error: {e}")
-        return {'total': 'N/A', 'used': 'N/A', 'percent': 0, 'swap_total': 'N/A', 'swap_used': 'N/A', 'swap_percent': 0, 'error': str(e)}
+        return {
+            'memory_total': 0, 'memory_used': 0, 'memory_available': 0, 'memory_percent': 0,
+            'swap_total': 0, 'swap_used': 0, 'swap_free': 0, 'swap_percent': 0,
+            'error': str(e)
+        }
 
 
 def get_disk_info():
@@ -138,13 +152,18 @@ def get_disk_info():
             if p.fstype:
                 try:
                     usage = psutil.disk_usage(p.mountpoint)
-                    total = usage.total / (1024**3)
-                    used = usage.used / (1024**3)
-                    parts.append({'device': p.device, 'mountpoint': p.mountpoint, 'total': f"{total:.1f}", 'used': f"{used:.1f}", 'percent': usage.percent})
-                except Exception:
-                    continue
+                    parts.append({
+                        'device': p.device,
+                        'mountpoint': p.mountpoint,
+                        'total': usage.total,  # Return raw bytes
+                        'used': usage.used,    # Return raw bytes
+                        'free': usage.free,    # Return raw bytes
+                        'percent': usage.percent
+                    })
+                except OSError as e:
+                    logging.warning(f"Could not get usage for {p.mountpoint}: {e}")
     except Exception as e:
-        logging.error(f"Disk partitions error: {e}")
+        logging.error(f"Disk info error: {e}")
     return parts
 
 
@@ -155,7 +174,6 @@ def get_system_time_info():
         
         # Convert boot time to readable format
         boot_datetime = datetime.fromtimestamp(boot_time)
-        boot_str = boot_datetime.strftime('%Y-%m-%d %H:%M:%S')
         
         # Format uptime
         days = int(uptime // (24 * 3600))
@@ -171,12 +189,13 @@ def get_system_time_info():
         uptime_str += f"{hours:02d}:{minutes:02d}:{seconds:02d}"
         
         return {
-            'boot_time': boot_str,
+            'boot_time': boot_datetime, # Return the datetime object
             'uptime': uptime_str
         }
     except Exception as e:
         logging.error(f"System time info error: {e}")
-        return {'boot_time': 'N/A', 'uptime': 'N/A'}
+        return {'boot_time': None, 'uptime': 'N/A'} # Return None for boot_time on error
+
 
 def get_temperature_info():
     try:
@@ -195,6 +214,7 @@ def get_temperature_info():
         logging.error(f"Temperature info error: {e}")
         return []
 
+
 def get_network_info():
     global _last_net
     try:
@@ -202,13 +222,15 @@ def get_network_info():
         sent = current.bytes_sent - _last_net.bytes_sent
         recv = current.bytes_recv - _last_net.bytes_recv
         _last_net = current
-        send_rate = sent * 8 / (MONITOR_INTERVAL * (1024**2))
-        recv_rate = recv * 8 / (MONITOR_INTERVAL * (1024**2))
+        # Calculate rates in Mbps (Megabits per second)
+        send_rate = (sent * 8) / (MONITOR_INTERVAL * (1024**2))
+        recv_rate = (recv * 8) / (MONITOR_INTERVAL * (1024**2))
         return {
-            'bytes_sent_total': f"{current.bytes_sent/(1024**3):.2f}",
-            'bytes_recv_total': f"{current.bytes_recv/(1024**3):.2f}",
-            'send_rate_mbps': f"{send_rate:.2f}",
-            'recv_rate_mbps': f"{recv_rate:.2f}"}
+            'bytes_sent_total': current.bytes_sent, # Return raw bytes
+            'bytes_recv_total': current.bytes_recv, # Return raw bytes
+            'send_rate_mbps': send_rate,           # Return raw Mbps
+            'recv_rate_mbps': recv_rate           # Return raw Mbps
+        }
     except Exception as e:
         logging.error(f"Network info error: {e}")
         return {'bytes_sent_total': 0, 'bytes_recv_total': 0, 'send_rate_mbps': 0, 'recv_rate_mbps': 0, 'error': str(e)}
@@ -230,7 +252,7 @@ async def background_monitor(sid):
             # Create metrics object for database
             metrics = SystemMetrics(
                 timestamp=datetime.utcnow(),
-                cpu_percent=cpu_info['cpu_percent'],
+                cpu_percent=cpu_info['percent'],
                 cpu_freq_current=cpu_info['cpu_freq_current'],
                 cpu_freq_min=cpu_info['cpu_freq_min'],
                 cpu_freq_max=cpu_info['cpu_freq_max'],
@@ -242,21 +264,26 @@ async def background_monitor(sid):
                 swap_used=memory_info['swap_used'],
                 swap_free=memory_info['swap_free'],
                 swap_percent=memory_info['swap_percent'],
-                disk_total=disk_info['total'],
-                disk_used=disk_info['used'],
-                disk_free=disk_info['free'],
-                disk_percent=disk_info['percent'],
+                disk_total=disk_info[0]['total'] if disk_info else 0,
+                disk_used=disk_info[0]['used'] if disk_info else 0,
+                disk_free=disk_info[0]['free'] if disk_info else 0, # Use the 'free' value directly
+                disk_percent=disk_info[0]['percent'] if disk_info else 0,
                 network_bytes_sent=network_info['bytes_sent_total'],
                 network_bytes_recv=network_info['bytes_recv_total'],
                 network_send_rate=network_info['send_rate_mbps'],
                 network_recv_rate=network_info['recv_rate_mbps'],
-                temperature=temp_info['current'],
+                temperature=temp_info[0]['current'] if temp_info else 0,
                 boot_time=time_info['boot_time'],
                 hostname=os.uname().nodename
             )
             
             # Store in database
             await db.store_metrics(metrics)
+            
+            # Prepare data for client emission (convert datetime)
+            time_info_for_client = time_info.copy()
+            if isinstance(time_info_for_client.get('boot_time'), datetime):
+                time_info_for_client['boot_time'] = time_info_for_client['boot_time'].isoformat() # Convert to ISO string
             
             # Emit to client
             data = {
@@ -265,7 +292,7 @@ async def background_monitor(sid):
                 'disk': disk_info,
                 'network': network_info,
                 'temperature': temp_info,
-                'system_time': time_info
+                'system_time': time_info_for_client # Use the modified copy
             }
             await sio.emit('system_update', data, room=sid)
             

@@ -19,7 +19,7 @@ def upgrade() -> None:
     # Create the system_metrics table
     op.create_table(
         'system_metrics',
-        sa.Column('id', sa.Integer(), nullable=False),
+        sa.Column('id', sa.Integer(), autoincrement=True),
         sa.Column('timestamp', sa.DateTime(), nullable=False),
         sa.Column('cpu_percent', sa.Float(), nullable=True),
         sa.Column('cpu_freq_current', sa.Float(), nullable=True),
@@ -44,7 +44,7 @@ def upgrade() -> None:
         sa.Column('temperature', sa.Float(), nullable=True),
         sa.Column('boot_time', sa.DateTime(), nullable=True),
         sa.Column('hostname', sa.String(), nullable=True),
-        sa.PrimaryKeyConstraint('id')
+        sa.PrimaryKeyConstraint('id', 'timestamp')
     )
     
     # Create indexes
