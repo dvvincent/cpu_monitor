@@ -37,6 +37,8 @@ A real-time system monitoring dashboard built with Python, aiohttp, and Socket.I
    - Historical metrics are stored in a PostgreSQL database enhanced with the TimescaleDB extension.
    - SQLAlchemy ORM is used for database interaction.
    - Alembic handles database schema migrations.
+   - Automatic data compression for metrics older than 1 hour
+   - Efficient storage and querying of historical data
 
 ### Frontend (HTML/JavaScript)
 
@@ -81,6 +83,10 @@ A real-time system monitoring dashboard built with Python, aiohttp, and Socket.I
 
 - PostgreSQL (Version 12+ recommended)
 - TimescaleDB extension enabled for PostgreSQL
+- Automatic data compression:
+  - Metrics older than 1 hour are automatically compressed
+  - Compression is ordered by timestamp for efficient querying
+  - Compression runs automatically in the background
 
 ## Installation
 
