@@ -102,6 +102,23 @@
         <div class="row mt-4">
             <div class="col-12">
                 <div class="card text-bg-dark">
+                    <div class="card-header d-flex justify-content-between align-items-center">
+                        <span>Historical Metrics</span>
+                        <div class="btn-group btn-group-sm">
+                            <button class="btn btn-outline-light" onclick="updateHistoricalData('1 minute')">1m</button>
+                            <button class="btn btn-outline-light active" onclick="updateHistoricalData('5 minutes')">5m</button>
+                            <button class="btn btn-outline-light" onclick="updateHistoricalData('1 hour')">1h</button>
+                        </div>
+                    </div>
+                    <div class="card-body">
+                        <canvas id="metricsChart"></canvas>
+                    </div>
+                </div>
+            </div>
+        </div>
+        <div class="row mt-4">
+            <div class="col-12">
+                <div class="card text-bg-dark">
                     <div class="card-header">System Information</div>
                     <div class="card-body">
                         <pre id="static-info" class="mb-0">Loading...</pre>
@@ -114,8 +131,110 @@
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js" integrity="sha384-YvpcrYf0tY3lHB60NNkmXc5s9fDVZLESaAA55NDzOxhy9GkcIdslK1eN7N6jIeHz" crossorigin="anonymous"></script>
     <!-- Socket.IO Client -->
     <script src="https://cdn.jsdelivr.net/npm/socket.io-client@4.0.1/dist/socket.io.min.js"></script>
+    <!-- Chart.js -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
     <script>
+    // Chart.js configuration
+    let metricsChart = null;
+    
+    function initChart() {
+        const ctx = document.getElementById('metricsChart').getContext('2d');
+        metricsChart = new Chart(ctx, {
+            type: 'line',
+            data: {
+                labels: [],
+                datasets: [
+                    {
+                        label: 'CPU %',
+                        borderColor: 'rgb(255, 99, 132)',
+                        data: []
+                    },
+                    {
+                        label: 'Memory %',
+                        borderColor: 'rgb(75, 192, 192)',
+                        data: []
+                    },
+                    {
+                        label: 'Disk %',
+                        borderColor: 'rgb(153, 102, 255)',
+                        data: []
+                    },
+                    {
+                        label: 'Network Send (Mbps)',
+                        borderColor: 'rgb(255, 159, 64)',
+                        data: []
+                    },
+                    {
+                        label: 'Network Receive (Mbps)',
+                        borderColor: 'rgb(54, 162, 235)',
+                        data: []
+                    }
+                ]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                animation: false,
+                interaction: {
+                    intersect: false,
+                    mode: 'index'
+                },
+                scales: {
+                    y: {
+                        beginAtZero: true,
+                        grid: {
+                            color: 'rgba(255, 255, 255, 0.1)'
+                        }
+                    },
+                    x: {
+                        grid: {
+                            color: 'rgba(255, 255, 255, 0.1)'
+                        }
+                    }
+                },
+                plugins: {
+                    legend: {
+                        position: 'top',
+                        labels: {
+                            color: 'rgb(255, 255, 255)'
+                        }
+                    }
+                }
+            }
+        });
+    }
+    
+    async function updateHistoricalData(interval = '5 minutes') {
+        try {
+            const response = await fetch(`/api/metrics/history?interval=${interval}`);
+            const data = await response.json();
+            
+            if (data.metrics && data.metrics.length > 0) {
+                const timestamps = data.metrics.map(m => new Date(m.timestamp).toLocaleTimeString());
+                const cpuData = data.metrics.map(m => m.cpu_percent);
+                const memoryData = data.metrics.map(m => m.memory_percent);
+                const diskData = data.metrics.map(m => m.disk_percent);
+                const netSendData = data.metrics.map(m => m.network_send_rate);
+                const netRecvData = data.metrics.map(m => m.network_recv_rate);
+                
+                metricsChart.data.labels = timestamps;
+                metricsChart.data.datasets[0].data = cpuData;
+                metricsChart.data.datasets[1].data = memoryData;
+                metricsChart.data.datasets[2].data = diskData;
+                metricsChart.data.datasets[3].data = netSendData;
+                metricsChart.data.datasets[4].data = netRecvData;
+                metricsChart.update();
+            }
+        } catch (error) {
+            console.error('Error fetching historical data:', error);
+        }
+    }
+    
     document.addEventListener('DOMContentLoaded', () => {
+        initChart();
+        updateHistoricalData();
+        // Update historical data every minute
+        setInterval(() => updateHistoricalData(), 60000);
         const connBadge = document.getElementById('conn-status');
         const cpuBar = document.getElementById('cpu-bar');
         const load1 = document.getElementById('load-1');

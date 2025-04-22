@@ -9,6 +9,8 @@ from pathlib import Path
 from aiohttp import web
 import socketio
 from jinja2 import Environment, FileSystemLoader
+from db.database import Database
+from db.models import SystemMetrics
 
 # Configure logging
 logging.basicConfig(
@@ -73,6 +75,10 @@ def load_config():
 
 # Load configuration
 config = load_config()
+
+# Initialize database
+db_url = os.environ.get('DATABASE_URL', 'postgresql+asyncpg://postgres:postgres@localhost:5432/systempulse')
+db = Database(db_url)
 
 # Set up Jinja2 templates
 env = Environment(loader=FileSystemLoader('templates'))
@@ -213,15 +219,56 @@ async def background_monitor(sid):
     await asyncio.sleep(0.1)
     while True:
         try:
+            # Collect metrics
+            cpu_info = get_cpu_info()
+            memory_info = get_memory_info()
+            disk_info = get_disk_info()
+            network_info = get_network_info()
+            temp_info = get_temperature_info()
+            time_info = get_system_time_info()
+            
+            # Create metrics object for database
+            metrics = SystemMetrics(
+                timestamp=datetime.utcnow(),
+                cpu_percent=cpu_info['cpu_percent'],
+                cpu_freq_current=cpu_info['cpu_freq_current'],
+                cpu_freq_min=cpu_info['cpu_freq_min'],
+                cpu_freq_max=cpu_info['cpu_freq_max'],
+                memory_total=memory_info['memory_total'],
+                memory_available=memory_info['memory_available'],
+                memory_used=memory_info['memory_used'],
+                memory_percent=memory_info['memory_percent'],
+                swap_total=memory_info['swap_total'],
+                swap_used=memory_info['swap_used'],
+                swap_free=memory_info['swap_free'],
+                swap_percent=memory_info['swap_percent'],
+                disk_total=disk_info['total'],
+                disk_used=disk_info['used'],
+                disk_free=disk_info['free'],
+                disk_percent=disk_info['percent'],
+                network_bytes_sent=network_info['bytes_sent_total'],
+                network_bytes_recv=network_info['bytes_recv_total'],
+                network_send_rate=network_info['send_rate_mbps'],
+                network_recv_rate=network_info['recv_rate_mbps'],
+                temperature=temp_info['current'],
+                boot_time=time_info['boot_time'],
+                hostname=os.uname().nodename
+            )
+            
+            # Store in database
+            await db.store_metrics(metrics)
+            
+            # Emit to client
             data = {
-                'cpu': get_cpu_info(),
-                'memory': get_memory_info(),
-                'disk': get_disk_info(),
-                'network': get_network_info(),
-                'temperature': get_temperature_info(),
-                'system_time': get_system_time_info()
+                'cpu': cpu_info,
+                'memory': memory_info,
+                'disk': disk_info,
+                'network': network_info,
+                'temperature': temp_info,
+                'system_time': time_info
             }
             await sio.emit('system_update', data, room=sid)
+            
             await asyncio.sleep(MONITOR_INTERVAL)
         except Exception as e:
             logging.error(f"Error in background monitor: {e}")
@@ -252,6 +299,72 @@ async def api_system_info(request):
         return web.json_response({'error': str(e)}, status=500)
 
 
+async def get_metrics_history(request):
+    """Get historical metrics data with optional time range and aggregation."""
+    try:
+        # Get query parameters
+        interval = request.query.get('interval', '5 minutes')
+        limit = int(request.query.get('limit', '100'))
+        
+        # Validate interval
+        valid_intervals = ['1 minute', '5 minutes', '1 hour']
+        if interval not in valid_intervals:
+            return web.json_response(
+                {'error': f'Invalid interval. Must be one of: {valid_intervals}'}, 
+                status=400
+            )
+        
+        # Get metrics from database
+        metrics = await db.get_metrics(interval, limit)
+        
+        # Format response
+        response = {
+            'interval': interval,
+            'data_points': len(metrics),
+            'metrics': [{
+                'timestamp': row.bucket.isoformat(),
+                'cpu_percent': row.cpu_percent_avg,
+                'memory_percent': row.memory_percent_avg,
+                'disk_percent': row.disk_percent_avg,
+                'temperature': row.temperature_avg,
+                'network_send_rate': row.network_send_rate_avg,
+                'network_recv_rate': row.network_recv_rate_avg
+            } for row in metrics]
+        }
+        
+        return web.json_response(response)
+    except Exception as e:
+        logging.error(f"Error getting metrics history: {e}")
+        return web.json_response({'error': str(e)}, status=500)
+
+
+async def get_metrics_summary(request):
+    """Get a summary of system metrics over different time periods."""
+    try:
+        summaries = {}
+        for interval in ['1 minute', '5 minutes', '1 hour']:
+            metrics = await db.get_metrics(interval, 1)
+            if metrics and len(metrics) > 0:
+                latest = metrics[0]
+                summaries[interval.replace(' ', '_')] = {
+                    'timestamp': latest.bucket.isoformat(),
+                    'cpu_percent': latest.cpu_percent_avg,
+                    'memory_percent': latest.memory_percent_avg,
+                    'disk_percent': latest.disk_percent_avg,
+                    'temperature': latest.temperature_avg,
+                    'network_send_rate': latest.network_send_rate_avg,
+                    'network_recv_rate': latest.network_recv_rate_avg
+                }
+        
+        return web.json_response({
+            'summaries': summaries,
+            'timestamp': datetime.utcnow().isoformat()
+        })
+    except Exception as e:
+        logging.error(f"Error getting metrics summary: {e}")
+        return web.json_response({'error': str(e)}, status=500)
+
+
 # Socket events
 @sio.event
 async def connect(sid, environ):
@@ -268,9 +381,19 @@ async def disconnect(sid):
 async def main():
     host = config['server']['host']
     
+    # Initialize database
+    try:
+        await db.init_db()
+        logging.info("Database initialized successfully")
+    except Exception as e:
+        logging.error(f"Failed to initialize database: {e}")
+        return
+    
     # Set up routes
     app.router.add_get('/', index)
     app.router.add_get('/api/system_info', api_system_info)
+    app.router.add_get('/api/metrics/history', get_metrics_history)
+    app.router.add_get('/api/metrics/summary', get_metrics_summary)
     
     if config['server']['https']['enabled']:
         # HTTPS server
