@@ -11,6 +11,7 @@ A real-time system monitoring dashboard built with Python, aiohttp, and Socket.I
 - Load average metrics
 - Temperature sensors data
 - System uptime and boot time
+- Historical system metrics storage using TimescaleDB
 
 ## Architecture Overview
 
@@ -30,6 +31,11 @@ A real-time system monitoring dashboard built with Python, aiohttp, and Socket.I
    - `background_monitor()` runs as an async coroutine
    - Collects all system metrics periodically
    - Emits data via Socket.IO to connected clients
+
+4. **Database Storage**:
+   - Historical metrics are stored in a PostgreSQL database enhanced with the TimescaleDB extension.
+   - SQLAlchemy ORM is used for database interaction.
+   - Alembic handles database schema migrations.
 
 ### Frontend (HTML/JavaScript)
 
@@ -57,13 +63,30 @@ A real-time system monitoring dashboard built with Python, aiohttp, and Socket.I
 - python-socketio
 - psutil
 - jinja2
+- sqlalchemy
+- psycopg2-binary
+- alembic
+
+## Database
+
+- PostgreSQL (Version 12+ recommended)
+- TimescaleDB extension enabled for PostgreSQL
 
 ## Installation
 
 1. Clone the repository
-2. Install dependencies: `pip install -r requirements.txt`
-3. Run the application: `python web_monitor.py`
-4. Open a browser and navigate to `https://localhost:3443`
+2. **Database Setup**:
+   - Install PostgreSQL and enable the TimescaleDB extension.
+   - Create a database for SystemPulse (e.g., `createdb systempulse`).
+   - Ensure the database user has permissions to create tables and hypertables.
+   - Set the `DATABASE_URL` environment variable (see below).
+3. Install Python dependencies: `pip install -r requirements.txt`
+4. **Run Database Migrations**:
+   ```bash
+   alembic upgrade head
+   ```
+5. Run the application: `python web_monitor.py`
+6. Open a browser and navigate to `https://localhost:3443` (or the configured host/port)
 
 ## Configuration
 
@@ -123,6 +146,7 @@ If no `config.yaml` is found, the application will use default values.
 - `USE_SSL`: Enable HTTPS (default: True)
 - `SSL_CERT`: Path to SSL certificate (default: ssl/cert.pem)
 - `SSL_KEY`: Path to SSL private key (default: ssl/key.pem)
+- `DATABASE_URL`: Connection string for the PostgreSQL/TimescaleDB database (default: `postgresql+psycopg2://postgres:postgres@localhost:5432/systempulse`). Format: `postgresql+psycopg2://<user>:<password>@<host>:<port>/<database>`
 
 ## SSL Certificate Setup
 
